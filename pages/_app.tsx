@@ -2,6 +2,8 @@ import "../styles/globals.css";
 import type { AppProps } from "next/app";
 import Head from "next/head";
 import { PrivyProvider } from "@privy-io/react-auth";
+import { baseSepolia, base, mainnet } from "viem/chains";
+import "../lib/acp-fetch";
 
 function MyApp({ Component, pageProps }: AppProps) {
   return (
@@ -43,9 +45,30 @@ function MyApp({ Component, pageProps }: AppProps) {
       <PrivyProvider
         appId={process.env.NEXT_PUBLIC_PRIVY_APP_ID || ""}
         config={{
-          embeddedWallets: {
-            createOnLogin: "all-users",
+          // Configure social login methods
+          loginMethods: [
+            'email',
+            'wallet',
+            'google',
+          ],
+          
+          // Configure appearance
+          appearance: {
+            theme: 'light',
+            accentColor: '#676FFF'
           },
+          
+          // Configure embedded wallets
+          embeddedWallets: {
+            createOnLogin: "users-without-wallets",
+            requireUserPasswordOnCreate: false,
+          },
+          
+          // Configure default chain for embedded wallets
+          defaultChain: baseSepolia,
+          
+          // Configure supported chains
+          supportedChains: [baseSepolia, mainnet, base],
         }}
       >
         <Component {...pageProps} />

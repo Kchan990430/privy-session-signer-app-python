@@ -1,9 +1,10 @@
 import Portal from "../components/graphics/portal";
-import { useLogin } from "@privy-io/react-auth";
+import { useLogin, usePrivy } from "@privy-io/react-auth";
 import { PrivyClient } from "@privy-io/server-auth";
 import { GetServerSideProps } from "next";
 import Head from "next/head";
 import { useRouter } from "next/router";
+import { useEffect } from "react";
 
 export const getServerSideProps: GetServerSideProps = async ({ req }) => {
   const cookieAuthToken = req.cookies["privy-token"];
@@ -16,10 +17,7 @@ export const getServerSideProps: GetServerSideProps = async ({ req }) => {
   const client = new PrivyClient(PRIVY_APP_ID!, PRIVY_APP_SECRET!);
 
   try {
-    const claims = await client.verifyAuthToken(cookieAuthToken);
-    // Use this result to pass props to a page for server rendering or to drive redirects!
-    // ref https://nextjs.org/docs/pages/api-reference/functions/get-server-side-props
-    console.log({ claims });
+    await client.verifyAuthToken(cookieAuthToken);
 
     return {
       props: {},
@@ -32,9 +30,16 @@ export const getServerSideProps: GetServerSideProps = async ({ req }) => {
 
 export default function LoginPage() {
   const router = useRouter();
+  const { ready, authenticated } = usePrivy();
   const { login } = useLogin({
     onComplete: () => router.push("/dashboard"),
   });
+
+  useEffect(() => {
+    if (ready && authenticated) {
+      router.push("/dashboard");
+    }
+  }, [ready, authenticated, router]);
 
   return (
     <>
