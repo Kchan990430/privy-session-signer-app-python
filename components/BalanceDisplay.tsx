@@ -30,8 +30,8 @@ export function BalanceDisplay({ address }: { address?: string }) {
 
     fetchBalance();
     
-    // Refresh balance every 5 seconds
-    const interval = setInterval(fetchBalance, 5000);
+    // Refresh balance every 30 seconds (instead of 5)
+    const interval = setInterval(fetchBalance, 30000);
     return () => clearInterval(interval);
   }, [address]);
 

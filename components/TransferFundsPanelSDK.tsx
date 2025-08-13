@@ -2,6 +2,7 @@ import { useState } from 'react';
 import { Address, Hash } from 'viem';
 import { usePrivy } from '@privy-io/react-auth';
 import { parseEther } from 'viem';
+import { AuthKeyStorage } from '../utils/authKeyStorage';
 
 interface TransferFundsPanelSDKProps {
   agentWallet: {
@@ -44,7 +45,65 @@ export function TransferFundsPanelSDK({
           return;
         }
         
-        hash = await onTransfer(agentWallet.id, toAddress as Address, amount);
+        // First, try backend transfer with auth key (no user approval needed)
+        try {
+          console.log('Attempting backend transfer with auth key...');
+          console.log('Agent wallet ID:', agentWallet.id);
+          console.log('Agent wallet address:', agentWallet.address);
+          
+          // Get auth config from localStorage if available
+          // Try multiple ID formats since there might be a mismatch
+          console.log('Searching for auth config with IDs:', {
+            'agentWallet.id': agentWallet.id,
+            'agentWallet.address': agentWallet.address,
+            'wallet-address': `wallet-${agentWallet.address}`,
+            'agent-address': `agent-${agentWallet.address}`
+          });
+          
+          // Check all stored auth configs for debugging
+          console.log('All stored auth configs:', Object.keys(AuthKeyStorage.getAll()));
+          
+          const storedAuthConfig = AuthKeyStorage.get(agentWallet.id) || 
+                                  AuthKeyStorage.getByAddress(agentWallet.address) ||
+                                  AuthKeyStorage.get(`wallet-${agentWallet.address}`) ||
+                                  AuthKeyStorage.get(`agent-${agentWallet.address}`) ||
+                                  AuthKeyStorage.get(agentWallet.address);
+          
+          console.log('Found auth config:', storedAuthConfig ? 'Yes' : 'No');
+          if (storedAuthConfig) {
+            console.log('Auth config wallet ID:', storedAuthConfig.walletId);
+            console.log('Auth config wallet address:', storedAuthConfig.walletAddress);
+          }
+          
+          const response = await fetch('/api/agent-wallets/transfer-backend', {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({
+              walletId: agentWallet.id,
+              walletAddress: agentWallet.address,
+              toAddress,
+              amountEth: amount,
+              authConfig: storedAuthConfig // Include auth config from localStorage
+            })
+          });
+
+          const data = await response.json();
+          
+          if (response.ok && data.transactionHash) {
+            hash = data.transactionHash as Hash;
+            console.log('✅ Backend transfer successful (no user approval needed)');
+          } else {
+            // Fallback to frontend transfer (will require user approval)
+            console.log('Backend transfer failed, falling back to frontend transfer...');
+            console.log('Error:', data.error);
+            hash = await onTransfer(agentWallet.id, toAddress as Address, amount);
+          }
+        } catch (backendError: any) {
+          // Fallback to frontend transfer
+          console.error('Backend transfer error:', backendError);
+          console.log('Falling back to frontend transfer (will require approval)...');
+          hash = await onTransfer(agentWallet.id, toAddress as Address, amount);
+        }
       } else {
         // Transfer from user to agent (handled by primary wallet)
         alert('Use the fund options in the Overview tab to send funds to the agent');
@@ -197,8 +256,9 @@ export function TransferFundsPanelSDK({
 
       {/* Info */}
       <div className="p-3 bg-blue-50 rounded text-sm text-blue-700">
-        <p className="font-medium mb-1">ℹ️ Using Privy SDK</p>
-        <p>All transactions are signed through the Privy SDK using session signers.</p>
+        <p className="font-medium mb-1">ℹ️ Backend Authorization</p>
+        <p>Wallets with auth keys can transfer funds without user approval.</p>
+        <p className="mt-1 text-xs">If no auth key exists, transfers will require user approval.</p>
       </div>
     </div>
   );
