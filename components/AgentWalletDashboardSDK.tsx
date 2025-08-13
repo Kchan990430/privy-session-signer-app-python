@@ -6,8 +6,6 @@ import { useAuthKeyRestore } from '../hooks/useAuthKeyRestore';
 import { TransferFundsPanelSDK } from './TransferFundsPanelSDK';
 import { CreateJobPanelSDK } from './CreateJobPanelSDK';
 import { BrowseJobsPanel } from './BrowseJobsPanel';
-import { WalletComparisonPanel } from './WalletComparisonPanel';
-import { SessionSignerPanel } from './SessionSignerPanel';
 import { BalanceDisplay } from './BalanceDisplay';
 import { CopyButton } from './CopyButton';
 import DashboardWalletCard from './DashboardWalletCard';
@@ -15,7 +13,7 @@ import { parseEther, Address } from 'viem';
 import { baseSepolia } from 'viem/chains';
 import { AuthKeyStorage } from '../utils/authKeyStorage';
 
-type TabType = 'overview' | 'transfer' | 'create-job' | 'browse-jobs' | 'operations' | 'comparison' | 'session-signer';
+type TabType = 'overview' | 'transfer' | 'create-job' | 'browse-jobs';
 
 export function AgentWalletDashboardSDK() {
   const { authenticated, logout, user } = usePrivy();
@@ -410,16 +408,6 @@ Would you like to use your primary wallet as an agent instead?`;
                   Transfer Funds
                 </button>
                 <button
-                  onClick={() => setActiveTab('session-signer')}
-                  className={`px-6 py-3 font-medium ${
-                    activeTab === 'session-signer'
-                      ? 'border-b-2 border-blue-600 text-blue-600'
-                      : 'text-gray-600 hover:text-gray-800'
-                  }`}
-                >
-                  Session Signer
-                </button>
-                <button
                   onClick={() => setActiveTab('create-job')}
                   className={`px-6 py-3 font-medium ${
                     activeTab === 'create-job'
@@ -438,26 +426,6 @@ Would you like to use your primary wallet as an agent instead?`;
                   }`}
                 >
                   Browse Jobs
-                </button>
-                <button
-                  onClick={() => setActiveTab('operations')}
-                  className={`px-6 py-3 font-medium ${
-                    activeTab === 'operations'
-                      ? 'border-b-2 border-blue-600 text-blue-600'
-                      : 'text-gray-600 hover:text-gray-800'
-                  }`}
-                >
-                  Test Operations
-                </button>
-                <button
-                  onClick={() => setActiveTab('comparison')}
-                  className={`px-6 py-3 font-medium ${
-                    activeTab === 'comparison'
-                      ? 'border-b-2 border-blue-600 text-blue-600'
-                      : 'text-gray-600 hover:text-gray-800'
-                  }`}
-                >
-                  Wallet Types
                 </button>
               </div>
             </div>
@@ -610,11 +578,6 @@ Would you like to use your primary wallet as an agent instead?`;
                 />
               )}
 
-              {activeTab === 'session-signer' && (
-                <SessionSignerPanel
-                  agentWallet={selectedAgent}
-                />
-              )}
 
               {activeTab === 'create-job' && (
                 <CreateJobPanelSDK
@@ -629,147 +592,19 @@ Would you like to use your primary wallet as an agent instead?`;
                 />
               )}
 
-              {activeTab === 'operations' && (
-                <div className="space-y-4">
-                  <h3 className="text-lg font-bold">Test Operations & Debug</h3>
-                  <p className="text-sm text-gray-600">
-                    Test agent wallet operations and debug wallet creation
-                  </p>
-                  
-                  {/* Debug Section */}
-                  <div className="p-4 bg-yellow-50 border border-yellow-200 rounded-lg mb-4">
-                    <h4 className="font-medium text-yellow-900 mb-2">Debug Information</h4>
-                    <div className="text-sm text-yellow-800 space-y-1">
-                      <p>Total Wallets: {wallets.length}</p>
-                      <p>Agent Wallets: {agentWallets.length}</p>
-                      <p>Primary Wallet: {primaryWallet?.address?.slice(0, 10) || 'None'}... ({primaryWallet?.walletClientType || 'N/A'})</p>
-                      <p>Wallets Ready: {ready ? 'Yes' : 'No'}</p>
-                      {error && <p className="text-red-600">Last Error: {error}</p>}
-                      <details className="mt-2">
-                        <summary className="cursor-pointer font-medium">All Wallets Details</summary>
-                        <div className="mt-1 space-y-1 text-xs">
-                          {wallets.map((w, i) => (
-                            <div key={i} className="pl-2">
-                              {i+1}. {w.address.slice(0, 10)}... - Type: {w.walletClientType} {w.connectorType && `(${w.connectorType})`}
-                            </div>
-                          ))}
-                        </div>
-                      </details>
-                    </div>
-                    <div className="mt-3 space-x-2">
-                      <button
-                        onClick={() => {
-                          console.log('All wallets:', wallets);
-                          console.log('Agent wallets:', agentWallets);
-                          console.log('Session signers:', getSessionSigner);
-                          alert('Check browser console for debug info');
-                        }}
-                        className="px-3 py-1 bg-yellow-600 text-white rounded text-sm hover:bg-yellow-700"
-                      >
-                        Log Debug Info
-                      </button>
-                      <button
-                        onClick={async () => {
-                          try {
-                            // Try to create without any parameters
-                            const wallet = await createAgentWallet();
-                            console.log('Created wallet:', wallet);
-                            if (wallet) {
-                              alert(`Success! Wallet created: ${wallet.address}`);
-                            }
-                          } catch (err: any) {
-                            console.error('Direct creation failed:', err);
-                            alert(`Failed: ${err.message}`);
-                          }
-                        }}
-                        className="px-3 py-1 bg-blue-600 text-white rounded text-sm hover:bg-blue-700"
-                      >
-                        Force Try Create
-                      </button>
-                    </div>
-                  </div>
-                  
-                  <div className="grid grid-cols-2 gap-4">
-                    <button
-                      onClick={async () => {
-                        try {
-                          const balance = await getAgentBalance(selectedAgent.id);
-                          alert(`Agent balance: ${balance?.toString() || '0'} wei`);
-                        } catch (error: any) {
-                          alert(`Balance check failed: ${error.message}`);
-                        }
-                      }}
-                      className="p-4 border rounded-lg hover:bg-gray-50"
-                    >
-                      <p className="font-medium">Check Balance</p>
-                      <p className="text-sm text-gray-600 mt-1">Get agent wallet balance</p>
-                    </button>
 
-                    <button
-                      onClick={async () => {
-                        try {
-                          const signer = getSessionSigner(selectedAgent.id);
-                          alert(`Has session signer: ${!!signer}\nAddress: ${signer?.address || 'N/A'}`);
-                        } catch (error: any) {
-                          alert(`Check failed: ${error.message}`);
-                        }
-                      }}
-                      className="p-4 border rounded-lg hover:bg-gray-50"
-                    >
-                      <p className="font-medium">Verify Session Signer</p>
-                      <p className="text-sm text-gray-600 mt-1">Check session signer status</p>
-                    </button>
-
-                    <button
-                      onClick={async () => {
-                        try {
-                          const timestamp = new Date().toISOString();
-                          const message = `Session signer test at ${timestamp}`;
-                          const signature = await signMessageAsAgent(selectedAgent.id, message);
-                          alert(`Signed: "${message}"\n\nSignature: ${signature?.slice(0, 50) || ''}...`);
-                        } catch (error: any) {
-                          alert(`Signing failed: ${error.message}`);
-                        }
-                      }}
-                      className="p-4 border rounded-lg hover:bg-gray-50"
-                    >
-                      <p className="font-medium">Sign Timestamp</p>
-                      <p className="text-sm text-gray-600 mt-1">Sign with session signer</p>
-                    </button>
-
-                    <button
-                      onClick={async () => {
-                        const signer = getSessionSigner(selectedAgent.id);
-                        if (signer) {
-                          alert('Session signer is ready for AcpContractClient integration');
-                        } else {
-                          alert('No session signer found');
-                        }
-                      }}
-                      className="p-4 border rounded-lg hover:bg-gray-50"
-                    >
-                      <p className="font-medium">ACP Integration Ready</p>
-                      <p className="text-sm text-gray-600 mt-1">Check ACP compatibility</p>
-                    </button>
-                  </div>
-                </div>
-              )}
-
-              {activeTab === 'comparison' && (
-                <WalletComparisonPanel primaryWalletAddress={primaryWallet?.address as Address} />
-              )}
             </div>
           </div>
 
           {/* Info Box */}
           <div className="bg-green-50 border border-green-200 rounded-lg p-4">
-            <h4 className="font-medium text-green-900 mb-2">✅ Session Signer Architecture</h4>
+            <h4 className="font-medium text-green-900 mb-2">✅ Backend Transfer System</h4>
             <ul className="text-sm text-green-800 space-y-1">
-              <li>• User-owned wallets with createAdditional parameter</li>
-              <li>• Session signers wrap Privy SDK wallet instances</li>
-              <li>• Compatible with AcpContractClient via SessionSigner interface</li>
-              <li>• All transactions signed through Privy SDK (no REST API)</li>
-              <li>• Wallet password required for transaction signing</li>
+              <li>• User-owned wallets with authorization keys</li>
+              <li>• Backend transfers without user approval</li>
+              <li>• Per-wallet unique P-256 keypairs</li>
+              <li>• Auth keys stored in localStorage for persistence</li>
+              <li>• Compatible with ACP protocol for agent operations</li>
             </ul>
           </div>
         </>
