@@ -1,13 +1,8 @@
-import { useCallback, useState, useEffect } from "react";
-import {
-  useSessionSigners,
-  WalletWithMetadata,
-} from "@privy-io/react-auth";
+import { useState, useEffect } from "react";
+import { WalletWithMetadata } from "@privy-io/react-auth";
 import { CopyButton } from "./CopyButton";
 import { BalanceDisplay } from "./BalanceDisplay";
-import { AuthKeyStorage } from "../utils/authKeyStorage";
-
-const SESSION_SIGNER_ID = process.env.NEXT_PUBLIC_SESSION_SIGNER_ID || 'qcug48gr4n08hjtzllu4v1o4';
+import { AuthKeyGenerator } from "./AuthKeyGenerator";
 
 interface DashboardWalletCardProps {
   wallet: WalletWithMetadata;
@@ -16,33 +11,18 @@ interface DashboardWalletCardProps {
 }
 
 export default function DashboardWalletCard({ wallet, isPrimary = false, onUpdate }: DashboardWalletCardProps) {
-  const { addSessionSigners, removeSessionSigners } = useSessionSigners();
   const [isLoading, setIsLoading] = useState(false);
   const [statusMessage, setStatusMessage] = useState("");
   const [authKeyInfo, setAuthKeyInfo] = useState<any>(null);
-  const [showAuthKeyPanel, setShowAuthKeyPanel] = useState(false);
+  const [showAuthKeyPanel, setShowAuthKeyPanel] = useState(true); // Show by default
+  const [showKeyGenerator, setShowKeyGenerator] = useState(false);
 
   // Check if this specific wallet has session signers
   const hasSessionSigners = wallet.delegated === true;
 
   // Check auth key status only on mount and when explicitly needed
   useEffect(() => {
-    // First check localStorage
-    const walletId = (wallet as any).id || 
-                   (wallet as any).wallet_id || 
-                   `agent-${wallet.address}` ||
-                   wallet.address;
-    
-    const storedConfig = AuthKeyStorage.get(walletId) || AuthKeyStorage.getByAddress(wallet.address);
-    if (storedConfig) {
-      setAuthKeyInfo({
-        exists: true,
-        authKeyId: storedConfig.authKeyId,
-        keyQuorumId: storedConfig.keyQuorumId,
-        walletAddress: storedConfig.walletAddress,
-        createdAt: storedConfig.createdAt
-      });
-    }
+    // No longer check localStorage for auth keys
     
     checkAuthKeyStatus();
   }, [wallet.address]); // Only re-run if wallet address changes
@@ -71,60 +51,26 @@ export default function DashboardWalletCard({ wallet, isPrimary = false, onUpdat
     }
   };
 
-  // Create per-wallet authorization key
-  const createAuthKey = async () => {
-    setIsLoading(true);
-    setStatusMessage("Creating authorization key...");
+  // Create per-wallet authorization key - now shows key generator
+  const createAuthKey = () => {
+    setShowKeyGenerator(true);
+  };
+  
+  // Handle key generation complete
+  const handleKeyGenerated = (publicKey: string, keyQuorumId: string) => {
+    setStatusMessage("✅ Auth key created and session signer added!");
+    setAuthKeyInfo({
+      exists: true,
+      keyQuorumId,
+      walletAddress: wallet.address
+    });
+    refreshAuthKeyStatus();
+    if (onUpdate) onUpdate();
     
-    try {
-      // Try to add auth key to existing wallet first
-      const walletId = (wallet as any).id || 
-                      (wallet as any).wallet_id || 
-                      `agent-${wallet.address}` ||
-                      wallet.address;
-      
-      const response = await fetch('/api/agent-wallets/add-auth-key', {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({
-          walletId,
-          walletAddress: wallet.address
-        })
-      });
-      
-      const data = await response.json();
-      
-      if (response.ok) {
-        setStatusMessage("✅ Auth key created and session signer added!");
-        setAuthKeyInfo(data);
-        
-        // Save to localStorage
-        if (data.authConfig) {
-          AuthKeyStorage.save(walletId, data.authConfig);
-          console.log('Auth config saved to localStorage');
-          
-          // Also restore to backend immediately
-          await AuthKeyStorage.restoreToBackend();
-        }
-        
-        refreshAuthKeyStatus(); // Refresh to get latest status
-        if (onUpdate) onUpdate();
-        
-        // Reload page after successful auth key creation
-        setTimeout(() => {
-          window.location.reload();
-        }, 1500);
-      } else {
-        setStatusMessage(`❌ Failed: ${data.error}`);
-      }
-      
-      setTimeout(() => setStatusMessage(""), 3000);
-    } catch (error: any) {
-      setStatusMessage(`❌ Error: ${error.message}`);
-      setTimeout(() => setStatusMessage(""), 5000);
-    } finally {
-      setIsLoading(false);
-    }
+    // Reload page after successful auth key creation
+    setTimeout(() => {
+      window.location.reload();
+    }, 1500);
   };
 
   // Rotate authorization key
@@ -414,45 +360,22 @@ export default function DashboardWalletCard({ wallet, isPrimary = false, onUpdat
             </div>
           ) : (
             <div className="text-center">
-              <p className="text-sm text-gray-600 mb-2">No authorization key found</p>
+              <p className="text-sm text-gray-600 mb-2">⚠️ No authorization key found</p>
               <button
                 onClick={createAuthKey}
                 disabled={isLoading}
-                className="px-4 py-2 bg-green-600 text-white rounded hover:bg-green-700 disabled:bg-gray-400"
+                className="px-4 py-2 bg-green-600 text-white rounded-lg hover:bg-green-700 disabled:bg-gray-400 font-semibold animate-pulse"
               >
-                Create Auth Key & Add Signer
+                🔑 Create Auth Key (Required for Backend Transactions)
               </button>
+              <p className="text-xs text-gray-500 mt-2">
+                This will generate a private key that you must save securely
+              </p>
             </div>
           )}
         </div>
       )}
 
-      {/* Original Session Signer Controls (Legacy) */}
-      <div className="flex gap-2 mt-3">
-        <button
-          onClick={addSessionSigner}
-          disabled={isLoading || hasSessionSigners}
-          className={`flex-1 text-sm py-2 px-3 rounded-md text-white transition-colors ${
-            isLoading || hasSessionSigners
-              ? "bg-gray-400 cursor-not-allowed"
-              : "bg-green-600 hover:bg-green-700"
-          }`}
-        >
-          {isLoading && !hasSessionSigners ? "Adding..." : hasSessionSigners ? "Has Signer ✓" : "Add Legacy Signer"}
-        </button>
-
-        <button
-          onClick={removeSessionSigner}
-          disabled={isLoading || !hasSessionSigners}
-          className={`flex-1 text-sm py-2 px-3 rounded-md text-white transition-colors ${
-            isLoading || !hasSessionSigners
-              ? "bg-gray-400 cursor-not-allowed"
-              : "bg-red-600 hover:bg-red-700"
-          }`}
-        >
-          {isLoading && hasSessionSigners ? "Removing..." : "Remove Legacy Signer"}
-        </button>
-      </div>
 
       {/* Status Message */}
       {statusMessage && (
@@ -470,6 +393,16 @@ export default function DashboardWalletCard({ wallet, isPrimary = false, onUpdat
         <div className="mt-2 text-xs text-gray-600">
           Backend can sign transactions without user approval
         </div>
+      )}
+      
+      {/* Auth Key Generator Modal */}
+      {showKeyGenerator && (
+        <AuthKeyGenerator
+          walletId={(wallet as any).id || wallet.address}
+          walletAddress={wallet.address}
+          onKeyGenerated={handleKeyGenerated}
+          onClose={() => setShowKeyGenerator(false)}
+        />
       )}
     </div>
   );

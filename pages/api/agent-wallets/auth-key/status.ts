@@ -1,5 +1,4 @@
 import { NextApiRequest, NextApiResponse } from 'next';
-import { WalletAuthStore } from '@virtuals-protocol/acp-node';
 
 export default async function handler(req: NextApiRequest, res: NextApiResponse) {
   if (req.method !== 'POST') {
@@ -7,6 +6,9 @@ export default async function handler(req: NextApiRequest, res: NextApiResponse)
   }
 
   try {
+    // Dynamic import to avoid webpack bundling issues
+    const { WalletAuthStore } = await import('@virtuals-protocol/acp-node');
+    
     const { walletId, walletAddress } = req.body;
 
     if (!walletId) {

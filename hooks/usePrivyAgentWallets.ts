@@ -69,7 +69,7 @@ class SessionSignerWrapper implements SessionSigner {
  * Uses createAdditional to create multiple wallets per user
  */
 export function usePrivyAgentWallets() {
-  const { authenticated, user } = usePrivy();
+  const { authenticated } = usePrivy();
   const { wallets, ready: walletsReady } = useWallets();
   const { createWallet } = useCreateWallet();
   const { setWalletPassword } = useSetWalletPassword();
@@ -104,7 +104,7 @@ export function usePrivyAgentWallets() {
     // If no EOA wallet, user logged in with social (email, Google, etc.)
     // Use the first embedded wallet as primary
     const embeddedWallets = wallets.filter(w => w.walletClientType === 'privy');
-    if (embeddedWallets.length > 0) {
+    if (embeddedWallets.length > 0 && embeddedWallets[0]) {
       // Return the first embedded wallet (oldest one, likely the login wallet)
       console.log('Primary wallet: First embedded wallet', embeddedWallets[0].address);
       return embeddedWallets[0];
@@ -117,6 +117,14 @@ export function usePrivyAgentWallets() {
   // Load agent wallets from Privy wallets
   useEffect(() => {
     if (walletsReady && wallets.length > 0) {
+      console.log('Loading wallets. Total wallets:', wallets.length);
+      console.log('Wallet details:', wallets.map(w => ({
+        address: w.address,
+        type: w.walletClientType,
+        imported: (w as any).imported,
+        delegated: (w as any).delegated
+      })));
+      
       const agents: AgentWallet[] = [];
       const signers = new Map<string, SessionSignerWrapper>();
       
@@ -134,9 +142,11 @@ export function usePrivyAgentWallets() {
       wallets.forEach((wallet) => {
         // Skip if this is the primary wallet
         if (primaryWallet && wallet.address === primaryWallet.address) {
+          console.log('Skipping primary wallet:', wallet.address);
           return;
         }
         
+        console.log('Adding agent wallet:', wallet.address);
         const agentId = `agent-${wallet.address}`;
         agents.push({
           id: agentId,
@@ -153,6 +163,7 @@ export function usePrivyAgentWallets() {
         agentIndex++;
       });
       
+      console.log('Total agent wallets found:', agents.length);
       setAgentWallets(agents);
       setSessionSigners(signers);
     }
@@ -283,7 +294,7 @@ export function usePrivyAgentWallets() {
       const txHash = await signer.sendTransaction({
         to: toAddress,
         value: amount,
-        chain: chainId === base.id ? base : baseSepolia,
+        chain: chainId === baseSepolia.id ? baseSepolia : base,
       });
       
       return txHash;
@@ -330,7 +341,7 @@ export function usePrivyAgentWallets() {
       const txHash = await signer.sendTransaction({
         to: tokenAddress,
         data: data as `0x${string}`,
-        chain: chainId === base.id ? base : baseSepolia,
+        chain: chainId === baseSepolia.id ? baseSepolia : base,
       });
       
       return txHash;
@@ -363,7 +374,7 @@ export function usePrivyAgentWallets() {
       
       const txHash = await signer.sendTransaction({
         ...tx,
-        chain: chainId === base.id ? base : baseSepolia,
+        chain: chainId === baseSepolia.id ? baseSepolia : base,
       });
       
       return txHash;
@@ -400,9 +411,11 @@ export function usePrivyAgentWallets() {
   }, [sessionSigners]);
   
   // Set wallet password for session signers
-  const setupWalletPassword = useCallback(async (password: string) => {
+  const setupWalletPassword = useCallback(async () => {
     try {
-      await setWalletPassword({ password });
+      // setWalletPassword from Privy doesn't take arguments
+      // The password is requested via the Privy UI
+      await setWalletPassword();
       return true;
     } catch (err: any) {
       setError(err.message || 'Failed to set wallet password');

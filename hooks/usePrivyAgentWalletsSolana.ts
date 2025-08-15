@@ -1,6 +1,5 @@
-import { useState, useEffect, useCallback } from 'react';
+import { useState, useCallback } from 'react';
 import { usePrivy, useWallets, useCreateWallet } from '@privy-io/react-auth';
-import { Address } from 'viem';
 
 /**
  * Alternative approach: Try creating Solana wallets as a workaround
@@ -51,9 +50,8 @@ export function usePrivyAgentWalletsSolana() {
   // Check what wallet types are available
   const checkWalletTypes = useCallback(() => {
     console.log('Available wallets:', wallets);
-    console.log('Ethereum wallets:', wallets.filter(w => w.chainType === 'ethereum'));
-    console.log('Solana wallets:', wallets.filter(w => w.chainType === 'solana'));
-    console.log('Other wallets:', wallets.filter(w => w.chainType !== 'ethereum' && w.chainType !== 'solana'));
+    console.log('Embedded wallets:', wallets.filter(w => w.walletClientType === 'privy'));
+    console.log('External wallets:', wallets.filter(w => w.walletClientType !== 'privy'));
   }, [wallets]);
   
   return {

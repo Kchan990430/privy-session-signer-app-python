@@ -1,25 +1,23 @@
 import { useState, useEffect } from 'react';
-import { usePrivy, useWallets, WalletWithMetadata } from '@privy-io/react-auth';
+import { usePrivy, useWallets, useCreateWallet, WalletWithMetadata } from '@privy-io/react-auth';
 import { usePrivyAgentWallets } from '../hooks/usePrivyAgentWallets';
-import { useAuthKeyRestore } from '../hooks/useAuthKeyRestore';
 // import { useAutoAuthKeySetup } from '../hooks/useAutoAuthKeySetup'; // Disabled - was causing excessive API calls
 import { TransferFundsPanelSDK } from './TransferFundsPanelSDK';
 import { CreateJobPanelSDK } from './CreateJobPanelSDK';
 import { BrowseJobsPanel } from './BrowseJobsPanel';
 import { BalanceDisplay } from './BalanceDisplay';
 import { CopyButton } from './CopyButton';
-import DashboardWalletCard from './DashboardWalletCard';
+import SimpleWalletCard from './SimpleWalletCard';
 import { parseEther, Address } from 'viem';
 import { baseSepolia } from 'viem/chains';
-import { AuthKeyStorage } from '../utils/authKeyStorage';
 
 type TabType = 'overview' | 'transfer' | 'create-job' | 'browse-jobs';
 
 export function AgentWalletDashboardSDK() {
   const { authenticated, logout, user } = usePrivy();
   const { wallets } = useWallets();
-  // Restore auth keys from localStorage on startup
-  const { restored: authKeysRestored, restoring: authKeysRestoring, error: authKeyError } = useAuthKeyRestore();
+  const { createWallet } = useCreateWallet();
+  // Auth keys are no longer stored in localStorage for security
   // AUTO-SETUP DISABLED: Was causing excessive API calls and errors with Privy
   // const { setupStatus } = useAutoAuthKeySetup(); 
   const setupStatus = {}; // Empty status for now
@@ -29,22 +27,15 @@ export function AgentWalletDashboardSDK() {
     loading,
     error,
     ready,
-    createAgentWallet,
     signMessageAsAgent,
-    transferFundsFromAgent,
-    getAgentBalance,
-    getSessionSigner
+    transferFundsFromAgent
   } = usePrivyAgentWallets();
 
   const [activeTab, setActiveTab] = useState<TabType>('overview');
   const [selectedAgent, setSelectedAgent] = useState<any>(null);
   const [isCreating, setIsCreating] = useState(false);
+  const [debugInfo, setDebugInfo] = useState<any>(null);
   
-  // Force refresh of wallet list
-  const handleWalletUpdate = () => {
-    // Trigger re-render of wallet cards
-    // The wallet list will refresh automatically through Privy hooks
-  };
 
   // Update selected agent when agentWallets change
   useEffect(() => {
@@ -56,94 +47,59 @@ export function AgentWalletDashboardSDK() {
     }
   }, [agentWallets, selectedAgent]);
 
+  // Debug: Check actual wallet status
+  useEffect(() => {
+    const checkWallets = async () => {
+      if (user?.id) {
+        try {
+          const response = await fetch('/api/debug/check-wallets', {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ userId: user.id })
+          });
+          if (response.ok) {
+            const data = await response.json();
+            setDebugInfo(data);
+            console.log('Debug wallet info:', data);
+          }
+        } catch (error) {
+          console.error('Failed to get debug info:', error);
+        }
+      }
+    };
+    checkWallets();
+  }, [user?.id, wallets]);
+
   const handleCreateAgent = async () => {
     setIsCreating(true);
     try {
-      console.log('Creating user-owned wallet with SDK (includes auth key)...');
+      console.log('Creating new embedded wallet using Privy SDK...');
       
-      // Log frontend user info for comparison with backend
-      console.log('👤 Frontend user info:', {
-        userId: user?.id,
-        userIdType: typeof user?.id,
-        userIdLength: user?.id?.length,
-        userEmail: user?.email?.address,
-        walletCount: wallets?.length || 0,
-        walletAddresses: wallets?.map(w => w.address) || []
-      });
+      // Check current wallet count
+      const embeddedWallets = wallets.filter(w => w.walletClientType === 'privy');
+      console.log('Current embedded wallets:', embeddedWallets.length);
       
-      // Use SDK to create wallet with auth key included
-      console.log('🚀 Making API call to create wallet...');
+      if (embeddedWallets.length >= 10) {
+        alert(`Cannot create more wallets. You have ${embeddedWallets.length} embedded wallets (max 10).`);
+        setIsCreating(false);
+        return;
+      }
       
-      const response = await fetch('/api/agent-wallets/create-with-auth', {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({
-          chainType: 'ethereum',
-          userId: user?.id || null,
-          serverControlled: false // Always create user-linked wallets
-        })
-      });
+      // Create wallet using Privy SDK directly
+      console.log('🚀 Creating new wallet with Privy SDK...');
+      
+      const newWallet = await createWallet();
+      console.log('Create wallet result:', newWallet);
 
-      console.log('📡 API call completed. Status:', response.status);
-      console.log('📡 Response headers:', Object.fromEntries(response.headers.entries()));
-
-      const data = await response.json();
-      console.log('📋 API Response status:', response.status);
-      console.log('📋 API Response data:', data);
-
-      if (response.ok) {
-        console.log('✅ Wallet created successfully, processing response...');
-        console.log('Full response data:', data);
+      if (newWallet) {
+        console.log('✅ Wallet created successfully:', newWallet.address);
         
-        // Save auth configuration to localStorage if provided
-        if (data.authConfig) {
-          console.log('Saving auth config to localStorage:', {
-            walletId: data.walletId,
-            walletAddress: data.address,
-            authConfigKeys: Object.keys(data.authConfig),
-            authConfig: data.authConfig
-          });
-          
-          // Save with multiple ID formats to ensure compatibility
-          AuthKeyStorage.save(data.walletId, data.authConfig);
-          AuthKeyStorage.save(data.address, data.authConfig);
-          AuthKeyStorage.save(`agent-${data.address}`, data.authConfig);
-          
-          console.log('✅ Auth configuration saved to localStorage with multiple IDs');
-          console.log('- Saved with walletId:', data.walletId);
-          console.log('- Saved with address:', data.address);
-          console.log('- Saved with agent-address:', `agent-${data.address}`);
-          
-          // Verify it was saved with multiple methods
-          const saved1 = AuthKeyStorage.get(data.walletId);
-          const saved2 = AuthKeyStorage.get(data.address);
-          const saved3 = AuthKeyStorage.get(`agent-${data.address}`);
-          
-          console.log('Verification - Auth config saved successfully:', {
-            'by walletId': saved1 ? 'Yes' : 'No',
-            'by address': saved2 ? 'Yes' : 'No', 
-            'by agent-address': saved3 ? 'Yes' : 'No'
-          });
-          
-          // Double-check localStorage directly
-          const allStored = AuthKeyStorage.getAll();
-          console.log('All stored auth configs after save:', Object.keys(allStored));
-          console.log(`Total auth configs in localStorage: ${Object.keys(allStored).length}`);
-        } else {
-          console.error('❌ No authConfig found in response!');
-          console.log('Response data:', data);
-        }
+        alert(`✅ Wallet created successfully!\n\nAddress: ${newWallet.address}\n\nTo enable backend transactions, use the 'Setup Auth Key' button to generate authorization keys.`);
         
-        alert(`✅ User-owned wallet created successfully with auth key!\n\nAddress: ${data.address}\nWallet ID: ${data.walletId}\nAuth Key ID: ${data.authKeyId}\n\nReady for backend transactions without user approval!\n\nAuth keys saved to localStorage for backend transfers.`);
-        
-        // Wait longer before refresh to ensure localStorage saving is complete
-        console.log('🔄 Waiting 3 seconds before page refresh to ensure localStorage is saved...');
-        setTimeout(() => {
-          console.log('🔄 Refreshing page now...');
-          window.location.reload();
-        }, 3000); // Increased from 1.5s to 3s
+        // The wallet list will automatically update via the useWallets hook
+        // No need to reload the page
       } else {
-        throw new Error(data.error || 'Failed to create wallet');
+        throw new Error('Failed to create wallet - no wallet returned');
       }
     } catch (error: any) {
       console.error('❌ Wallet creation failed with error:', error);
@@ -272,24 +228,6 @@ Would you like to use your primary wallet as an agent instead?`;
           </div>
         )}
         
-        {/* Auth Key Restoration Status */}
-        {authKeysRestoring && (
-          <div className="mt-4 p-3 bg-blue-50 border border-blue-200 rounded-lg">
-            <p className="text-blue-800 text-sm">🔄 Restoring auth keys from localStorage...</p>
-          </div>
-        )}
-        
-        {authKeysRestored && !authKeysRestoring && !authKeyError && (
-          <div className="mt-4 p-3 bg-green-50 border border-green-200 rounded-lg">
-            <p className="text-green-800 text-sm">✅ Auth keys restored from localStorage</p>
-          </div>
-        )}
-        
-        {authKeyError && (
-          <div className="mt-4 p-3 bg-yellow-50 border border-yellow-200 rounded-lg">
-            <p className="text-yellow-800 text-sm">⚠️ Auth key restore error: {authKeyError}</p>
-          </div>
-        )}
       </div>
 
       {/* Agent Selection */}
@@ -341,6 +279,22 @@ Would you like to use your primary wallet as an agent instead?`;
           <div className="text-center py-8 text-gray-500">
             <p>No additional agent wallets available.</p>
             <p className="text-sm mt-2">Use your primary wallet above or switch to backend-managed wallets.</p>
+            {debugInfo && (
+              <div className="mt-4 p-4 bg-yellow-50 border border-yellow-200 rounded text-left text-xs">
+                <p className="font-semibold">Debug Info:</p>
+                <p>Total Embedded Wallets: {debugInfo.embeddedWallets.count}</p>
+                <p>Total EOA Wallets: {debugInfo.eoaWallets.count}</p>
+                <p>Can Create More: {debugInfo.embeddedWallets.canCreateMore ? 'Yes' : 'No'}</p>
+                {debugInfo.embeddedWallets.wallets.length > 0 && (
+                  <div className="mt-2">
+                    <p className="font-semibold">Embedded Wallets Found:</p>
+                    {debugInfo.embeddedWallets.wallets.map((w: any, i: number) => (
+                      <p key={i} className="font-mono">{w.address}</p>
+                    ))}
+                  </div>
+                )}
+              </div>
+            )}
           </div>
         ) : (
           <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
@@ -364,9 +318,13 @@ Would you like to use your primary wallet as an agent instead?`;
                   <p className="mt-1">
                     Balance: <BalanceDisplay address={agent.address} />
                   </p>
-                  {agent.hasSessionSigner && (
+                  {agent.hasSessionSigner ? (
                     <span className="inline-block mt-1 text-xs bg-green-100 text-green-800 px-2 py-0.5 rounded">
-                      ✓ Session Signer
+                      ✓ Auth Ready
+                    </span>
+                  ) : (
+                    <span className="inline-block mt-1 text-xs bg-yellow-100 text-yellow-800 px-2 py-0.5 rounded">
+                      ⚠️ Auth Key Required
                     </span>
                   )}
                 </div>
@@ -457,39 +415,20 @@ Would you like to use your primary wallet as an agent instead?`;
                     </div>
                   )}
                   
-                  {/* All Wallets Section */}
-                  <div>
-                    <h3 className="text-lg font-bold mb-4">All Wallets</h3>
-                    <div className="space-y-3">
-                      {/* Primary Wallet */}
-                      {primaryWallet && (
-                        <DashboardWalletCard 
-                          key={`primary-${primaryWallet.address}`}
-                          wallet={primaryWallet as unknown as WalletWithMetadata} 
-                          isPrimary={true}
-                          onUpdate={handleWalletUpdate}
-                        />
-                      )}
-                      
-                      {/* Other Wallets */}
-                      {wallets
-                        .filter(w => primaryWallet ? w.address !== primaryWallet.address : true)
-                        .map((wallet) => (
-                          <DashboardWalletCard 
-                            key={wallet.address}
-                            wallet={wallet as unknown as WalletWithMetadata}
-                            isPrimary={false}
-                            onUpdate={handleWalletUpdate}
-                          />
-                        ))}
+                  {/* Selected Wallet Info */}
+                  {selectedAgent && (
+                    <div className="mt-6">
+                      <h3 className="text-lg font-bold mb-4">Selected Wallet Details</h3>
+                      <SimpleWalletCard 
+                        wallet={{
+                          address: selectedAgent.address,
+                          walletClientType: 'privy',
+                          delegated: selectedAgent.hasSessionSigner,
+                          ...selectedAgent
+                        } as unknown as WalletWithMetadata}
+                      />
                     </div>
-                    
-                    {wallets.length === 0 && (
-                      <div className="p-4 bg-gray-50 rounded-lg text-center text-gray-600">
-                        No wallets found. Create one to get started.
-                      </div>
-                    )}
-                  </div>
+                  )}
                   
                   {/* Agent Overview Section */}
                   {selectedAgent && (
@@ -582,7 +521,6 @@ Would you like to use your primary wallet as an agent instead?`;
               {activeTab === 'create-job' && (
                 <CreateJobPanelSDK
                   agentWallet={selectedAgent}
-                  getSessionSigner={() => getSessionSigner(selectedAgent.id)}
                 />
               )}
 

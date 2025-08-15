@@ -1,6 +1,6 @@
 import { useState, useEffect } from 'react';
 import { Address } from 'viem';
-import type { SessionSigner } from '../hooks/usePrivyAgentWallets';
+import { PrivateKeyInput } from './PrivateKeyInput';
 
 interface Agent {
   id: string;
@@ -13,11 +13,6 @@ interface Agent {
     successRate?: number;
     avgRating?: number;
   };
-  offerings?: Array<{
-    name: string;
-    price: string;
-    requirementSchema?: any;
-  }>;
 }
 
 interface CreateJobPanelSDKProps {
@@ -26,22 +21,15 @@ interface CreateJobPanelSDKProps {
     address: Address;
     name: string;
   };
-  getSessionSigner: () => SessionSigner | null;
 }
 
-export function CreateJobPanelSDK({ agentWallet, getSessionSigner }: CreateJobPanelSDKProps) {
-  const [providerAddress, setProviderAddress] = useState('');
-  const [evaluatorAddress, setEvaluatorAddress] = useState('');
-  const [expirationHours, setExpirationHours] = useState('24');
-  const [isCreating, setIsCreating] = useState(false);
-  const [jobResult, setJobResult] = useState<{ txHash: string; jobId: number } | null>(null);
+export function CreateJobPanelSDK({ agentWallet }: CreateJobPanelSDKProps) {
   const [agents, setAgents] = useState<Agent[]>([]);
   const [loadingAgents, setLoadingAgents] = useState(false);
-  const [showAgentBrowser, setShowAgentBrowser] = useState(false);
-  const [selectedAgentType, setSelectedAgentType] = useState<'provider' | 'evaluator'>('provider');
+  const [isCreating, setIsCreating] = useState(false);
+  const [jobResults, setJobResults] = useState<any[]>([]);
   const [searchKeyword, setSearchKeyword] = useState('');
-  const [jobAmount, setJobAmount] = useState('0.001');
-  const [serviceRequirement, setServiceRequirement] = useState('');
+  const [showPrivateKeyInput, setShowPrivateKeyInput] = useState(false);
 
   // Browse agents using ACP SDK
   const browseAgents = async (keyword: string = '') => {
@@ -53,7 +41,7 @@ export function CreateJobPanelSDK({ agentWallet, getSessionSigner }: CreateJobPa
         body: JSON.stringify({
           keyword: keyword || 'agent',
           options: {
-            top_k: 10,
+            top_k: 20, // Get more agents for concurrent testing
             graduationStatus: 'BOTH',
             onlineStatus: 'ALL'
           }
@@ -66,6 +54,7 @@ export function CreateJobPanelSDK({ agentWallet, getSessionSigner }: CreateJobPa
 
       const data = await response.json();
       setAgents(data.agents || []);
+      console.log(`Found ${data.agents?.length || 0} agents`);
     } catch (error) {
       console.error('Failed to browse agents:', error);
       setAgents([]);
@@ -79,341 +68,222 @@ export function CreateJobPanelSDK({ agentWallet, getSessionSigner }: CreateJobPa
     browseAgents('');
   }, []);
 
-  const selectAgent = (agent: Agent, type: 'provider' | 'evaluator') => {
-    if (type === 'provider') {
-      setProviderAddress(agent.walletAddress);
-    } else {
-      setEvaluatorAddress(agent.walletAddress);
+  const handleCreateConcurrentJobs = async () => {
+    if (agents.length === 0) {
+      alert('No agents available. Please browse agents first.');
+      return;
     }
-    setShowAgentBrowser(false);
+
+    // Show private key input modal
+    setShowPrivateKeyInput(true);
   };
 
-  const handleCreateJob = async () => {
-    const signer = getSessionSigner();
-    if (!signer) {
-      alert('Session signer not available');
-      return;
-    }
-
-    if (!providerAddress || !evaluatorAddress) {
-      alert('Please enter both provider and evaluator addresses');
-      return;
-    }
-
-    // Validate addresses
-    if (!providerAddress.match(/^0x[a-fA-F0-9]{40}$/)) {
-      alert('Invalid provider address format');
-      return;
-    }
-    if (!evaluatorAddress.match(/^0x[a-fA-F0-9]{40}$/)) {
-      alert('Invalid evaluator address format');
-      return;
-    }
-
+  const executeJobCreation = async (privateKeyBase64: string) => {
     setIsCreating(true);
-    setJobResult(null);
+    setJobResults([]);
 
     try {
-      // Use ACP SDK to create job
-      const response = await fetch('/api/acp/initiate-job', {
+      console.log(`Creating jobs for ${agents.length} agents with authorization...`);
+
+      // Call the concurrent job creation API with private key
+      const response = await fetch('/api/acp/create-concurrent-jobs', {
         method: 'POST',
         headers: {
           'Content-Type': 'application/json',
         },
         body: JSON.stringify({
-          providerAddress,
-          evaluatorAddress,
-          serviceRequirement: serviceRequirement || 'Complete the requested task',
-          amount: parseFloat(jobAmount),
-          expirationHours: parseInt(expirationHours),
-          agentWalletAddress: agentWallet.address,
+          walletId: agentWallet.id,
+          walletAddress: agentWallet.address,
+          privateKeyBase64,
+          agents: agents.map(agent => ({
+            name: agent.name,
+            walletAddress: agent.walletAddress
+          }))
         }),
       });
 
       if (!response.ok) {
         const error = await response.json();
-        throw new Error(error.message || 'Failed to create job');
+        throw new Error(error.error || 'Failed to create concurrent jobs');
       }
 
       const result = await response.json();
-      setJobResult(result);
+      setJobResults(result.results || []);
 
-      alert(`Job created successfully!\nJob ID: ${result.jobId}${result.txHash ? `\nTx Hash: ${result.txHash}` : ''}`);
+      alert(`✅ Created ${result.successCount} jobs successfully!\n${result.failureCount > 0 ? `⚠️ ${result.failureCount} jobs failed` : ''}`);
       
-      // Reset form
-      setProviderAddress('');
-      setEvaluatorAddress('');
-      setServiceRequirement('');
-      setJobAmount('0.001');
-      setExpirationHours('24');
     } catch (error: any) {
-      console.error('Job creation error:', error);
-      alert(`Failed to create job: ${error.message || 'Unknown error'}`);
+      console.error('Concurrent job creation error:', error);
+      alert(`Failed to create jobs: ${error.message || 'Unknown error'}`);
     } finally {
       setIsCreating(false);
     }
   };
 
+  // Handle private key submission
+  const handlePrivateKeySubmit = (_: string, privateKeyBase64: string) => {
+    setShowPrivateKeyInput(false);
+    executeJobCreation(privateKeyBase64);
+  };
+
   return (
     <div className="space-y-4">
       <div className="flex justify-between items-center">
-        <h3 className="text-lg font-bold">Create ACP Job</h3>
-        <button
-          onClick={() => {
-            setShowAgentBrowser(true);
-            browseAgents(searchKeyword);
+        <div>
+          <h3 className="text-lg font-bold">Create Concurrent Jobs</h3>
+          <p className="text-sm text-gray-600 mt-1">
+            Create test jobs for all available agents (Amount: 0 ETH, Service: "testing create concurrent jobs")
+          </p>
+        </div>
+      </div>
+
+      {/* Search Bar */}
+      <div className="flex gap-2">
+        <input
+          type="text"
+          value={searchKeyword}
+          onChange={(e) => setSearchKeyword(e.target.value)}
+          placeholder="Search agents (optional)..."
+          className="flex-1 px-3 py-2 border rounded"
+          onKeyPress={(e) => {
+            if (e.key === 'Enter') {
+              browseAgents(searchKeyword);
+            }
           }}
-          className="px-4 py-2 bg-blue-600 text-white rounded hover:bg-blue-700"
+        />
+        <button
+          onClick={() => browseAgents(searchKeyword)}
+          disabled={loadingAgents}
+          className="px-4 py-2 bg-blue-600 text-white rounded hover:bg-blue-700 disabled:bg-gray-400"
         >
-          Browse Agents
+          {loadingAgents ? 'Loading...' : 'Browse Agents'}
         </button>
       </div>
 
-      {/* Agent Browser Modal */}
-      {showAgentBrowser && (
-        <div className="fixed inset-0 bg-black bg-opacity-50 flex items-center justify-center z-50">
-          <div className="bg-white rounded-lg p-6 max-w-4xl w-full max-h-[80vh] overflow-y-auto">
-            <div className="flex justify-between items-center mb-4">
-              <h3 className="text-lg font-bold">Browse Agents</h3>
-              <button
-                onClick={() => setShowAgentBrowser(false)}
-                className="text-gray-500 hover:text-gray-700"
-              >
-                ✕
-              </button>
-            </div>
-
-            {/* Search Bar */}
-            <div className="mb-4 flex gap-2">
-              <input
-                type="text"
-                value={searchKeyword}
-                onChange={(e) => setSearchKeyword(e.target.value)}
-                placeholder="Search agents..."
-                className="flex-1 px-3 py-2 border rounded"
-                onKeyPress={(e) => {
-                  if (e.key === 'Enter') {
-                    browseAgents(searchKeyword);
-                  }
-                }}
-              />
-              <button
-                onClick={() => browseAgents(searchKeyword)}
-                className="px-4 py-2 bg-blue-600 text-white rounded hover:bg-blue-700"
-              >
-                Search
-              </button>
-            </div>
-
-            {/* Agent Type Selection */}
-            <div className="mb-4">
-              <label className="text-sm font-medium text-gray-700">
-                Selecting for:
-              </label>
-              <div className="flex gap-2 mt-1">
-                <button
-                  onClick={() => setSelectedAgentType('provider')}
-                  className={`px-3 py-1 rounded ${
-                    selectedAgentType === 'provider'
-                      ? 'bg-blue-600 text-white'
-                      : 'bg-gray-200'
-                  }`}
-                >
-                  Provider
-                </button>
-                <button
-                  onClick={() => setSelectedAgentType('evaluator')}
-                  className={`px-3 py-1 rounded ${
-                    selectedAgentType === 'evaluator'
-                      ? 'bg-blue-600 text-white'
-                      : 'bg-gray-200'
-                  }`}
-                >
-                  Evaluator
-                </button>
+      {/* Available Agents */}
+      <div className="border rounded-lg p-4 bg-gray-50">
+        <h4 className="font-medium mb-3">Available Agents ({agents.length})</h4>
+        {loadingAgents ? (
+          <div className="text-center py-4 text-gray-500">Loading agents...</div>
+        ) : agents.length > 0 ? (
+          <div className="max-h-60 overflow-y-auto space-y-2">
+            {agents.map((agent) => (
+              <div key={agent.id} className="flex items-center justify-between p-2 bg-white rounded border">
+                <div className="flex-1">
+                  <span className="font-medium text-sm">{agent.name}</span>
+                  <span className="ml-2 text-xs text-gray-500 font-mono">
+                    {agent.walletAddress.slice(0, 8)}...{agent.walletAddress.slice(-6)}
+                  </span>
+                  {agent.metrics?.totalJobs !== undefined && (
+                    <span className="ml-2 text-xs text-gray-600">
+                      ({agent.metrics.totalJobs} jobs)
+                    </span>
+                  )}
+                </div>
+                <span className="text-xs bg-green-100 text-green-800 px-2 py-1 rounded">
+                  Ready
+                </span>
               </div>
-            </div>
+            ))}
+          </div>
+        ) : (
+          <div className="text-center py-4 text-gray-500">
+            No agents found. Try browsing agents first.
+          </div>
+        )}
+      </div>
 
-            {/* Agents List */}
-            {loadingAgents ? (
-              <div className="text-center py-8">Loading agents...</div>
-            ) : agents.length > 0 ? (
-              <div className="grid grid-cols-1 gap-4">
-                {agents.map((agent) => (
-                  <div
-                    key={agent.id}
-                    className="border rounded-lg p-4 hover:bg-gray-50 cursor-pointer"
-                    onClick={() => selectAgent(agent, selectedAgentType)}
-                  >
-                    <div className="flex justify-between items-start">
-                      <div className="flex-1">
-                        <h4 className="font-semibold">{agent.name}</h4>
-                        <p className="text-sm text-gray-600 mt-1">
-                          {agent.description}
-                        </p>
-                        <div className="flex items-center gap-4 mt-2 text-xs text-gray-500">
-                          <span className="font-mono">
-                            {agent.walletAddress.slice(0, 8)}...
-                          </span>
-                          {agent.metrics?.totalJobs && (
-                            <span>Jobs: {agent.metrics.totalJobs}</span>
-                          )}
-                          {agent.metrics?.avgRating && (
-                            <span>Rating: {agent.metrics.avgRating}/5</span>
-                          )}
-                          {agent.twitterHandle && (
-                            <span>@{agent.twitterHandle}</span>
-                          )}
-                        </div>
-                        {agent.offerings && agent.offerings.length > 0 && (
-                          <div className="mt-2">
-                            <span className="text-xs text-gray-600">Services: </span>
-                            {agent.offerings.map((offer, idx) => (
-                              <span key={idx} className="text-xs bg-gray-100 px-2 py-1 rounded mr-1">
-                                {offer.name} ({offer.price} ETH)
-                              </span>
-                            ))}
-                          </div>
-                        )}
-                      </div>
-                      <button
-                        className="px-3 py-1 bg-green-600 text-white rounded text-sm hover:bg-green-700"
-                      >
-                        Select
-                      </button>
-                    </div>
+      {/* Create Jobs Button */}
+      <button
+        onClick={handleCreateConcurrentJobs}
+        disabled={isCreating || agents.length === 0}
+        className={`w-full py-3 rounded font-medium text-white transition-colors ${
+          isCreating || agents.length === 0
+            ? 'bg-gray-400 cursor-not-allowed'
+            : 'bg-green-600 hover:bg-green-700'
+        }`}
+      >
+        {isCreating 
+          ? `Creating Jobs for ${agents.length} Agents...` 
+          : `Create Jobs for All ${agents.length} Agents`
+        }
+      </button>
+
+      {/* Job Results */}
+      {jobResults.length > 0 && (
+        <div className="border rounded-lg p-4">
+          <h4 className="font-medium mb-3">Job Creation Results</h4>
+          <div className="max-h-60 overflow-y-auto space-y-2">
+            {jobResults.map((result, index) => (
+              <div 
+                key={index} 
+                className={`p-2 rounded text-sm ${
+                  result.success 
+                    ? 'bg-green-50 border border-green-200' 
+                    : 'bg-red-50 border border-red-200'
+                }`}
+              >
+                <div className="flex justify-between items-center">
+                  <span className="font-medium">
+                    {result.agent || `Agent ${index + 1}`}
+                  </span>
+                  {result.success ? (
+                    <span className="text-green-700">
+                      ✅ Job ID: {result.jobId}
+                    </span>
+                  ) : (
+                    <span className="text-red-700">
+                      ❌ {result.error || 'Failed'}
+                    </span>
+                  )}
+                </div>
+                {result.txHash && (
+                  <div className="text-xs text-gray-600 mt-1 font-mono">
+                    Tx: {result.txHash.slice(0, 10)}...{result.txHash.slice(-8)}
                   </div>
-                ))}
+                )}
               </div>
-            ) : (
-              <div className="text-center py-8 text-gray-500">
-                No agents found. Try a different search keyword.
-              </div>
-            )}
+            ))}
+          </div>
+          <div className="mt-3 pt-3 border-t text-sm">
+            <div className="flex justify-between">
+              <span>Total Success:</span>
+              <span className="font-medium text-green-700">
+                {jobResults.filter(r => r.success).length}
+              </span>
+            </div>
+            <div className="flex justify-between mt-1">
+              <span>Total Failed:</span>
+              <span className="font-medium text-red-700">
+                {jobResults.filter(r => !r.success).length}
+              </span>
+            </div>
           </div>
         </div>
       )}
 
-      {/* Job Parameters */}
-      <div className="space-y-3">
-        <div>
-          <label className="block text-sm font-medium text-gray-700 mb-1">
-            Provider Address
-          </label>
-          <div className="flex gap-2">
-            <input
-              type="text"
-              value={providerAddress}
-              onChange={(e) => setProviderAddress(e.target.value)}
-              placeholder="0x..."
-              className="flex-1 px-3 py-2 border rounded font-mono text-sm"
-              disabled={isCreating}
-            />
-            <button
-              onClick={() => {
-                setSelectedAgentType('provider');
-                setShowAgentBrowser(true);
-              }}
-              className="px-3 py-2 bg-gray-200 rounded hover:bg-gray-300 text-sm"
-            >
-              Browse
-            </button>
-          </div>
-        </div>
-
-        <div>
-          <label className="block text-sm font-medium text-gray-700 mb-1">
-            Evaluator Address
-          </label>
-          <div className="flex gap-2">
-            <input
-              type="text"
-              value={evaluatorAddress}
-              onChange={(e) => setEvaluatorAddress(e.target.value)}
-              placeholder="0x..."
-              className="flex-1 px-3 py-2 border rounded font-mono text-sm"
-              disabled={isCreating}
-            />
-            <button
-              onClick={() => {
-                setSelectedAgentType('evaluator');
-                setShowAgentBrowser(true);
-              }}
-              className="px-3 py-2 bg-gray-200 rounded hover:bg-gray-300 text-sm"
-            >
-              Browse
-            </button>
-          </div>
-        </div>
-
-        <div>
-          <label className="block text-sm font-medium text-gray-700 mb-1">
-            Service Requirement
-          </label>
-          <textarea
-            value={serviceRequirement}
-            onChange={(e) => setServiceRequirement(e.target.value)}
-            placeholder="Describe the task or service required..."
-            className="w-full px-3 py-2 border rounded text-sm"
-            rows={3}
-            disabled={isCreating}
-          />
-        </div>
-
-        <div>
-          <label className="block text-sm font-medium text-gray-700 mb-1">
-            Job Amount (ETH)
-          </label>
-          <input
-            type="number"
-            value={jobAmount}
-            onChange={(e) => setJobAmount(e.target.value)}
-            step="0.001"
-            min="0"
-            placeholder="0.001"
-            className="w-full px-3 py-2 border rounded text-sm"
-            disabled={isCreating}
-          />
-        </div>
-
-        <div>
-          <label className="block text-sm font-medium text-gray-700 mb-1">
-            Expiration (hours)
-          </label>
-          <input
-            type="number"
-            value={expirationHours}
-            onChange={(e) => setExpirationHours(e.target.value)}
-            min="1"
-            placeholder="24"
-            className="w-full px-3 py-2 border rounded text-sm"
-            disabled={isCreating}
-          />
-        </div>
+      {/* Info Box */}
+      <div className="p-3 bg-blue-50 border border-blue-200 rounded-lg">
+        <p className="text-sm text-blue-800">
+          💡 This will create test jobs with all available agents using:
+        </p>
+        <ul className="text-sm text-blue-700 mt-2 space-y-1">
+          <li>• Amount: 0 ETH (test jobs)</li>
+          <li>• Service: "testing create concurrent jobs"</li>
+          <li>• Provider & Evaluator: Same agent (for testing)</li>
+          <li>• Requires authorization key for backend signing</li>
+        </ul>
       </div>
 
-      {/* Create Job Button */}
-      <button
-        onClick={handleCreateJob}
-        disabled={isCreating || !providerAddress || !evaluatorAddress}
-        className={`w-full py-3 rounded font-medium ${
-          isCreating || !providerAddress || !evaluatorAddress
-            ? 'bg-gray-300 cursor-not-allowed'
-            : 'bg-green-600 text-white hover:bg-green-700'
-        }`}
-      >
-        {isCreating ? 'Creating Job...' : 'Create Job'}
-      </button>
-
-      {/* Job Result */}
-      {jobResult && (
-        <div className="p-4 bg-green-50 border border-green-200 rounded">
-          <h4 className="font-medium text-green-900 mb-2">Job Created Successfully!</h4>
-          <div className="text-sm space-y-1">
-            <p>Job ID: <span className="font-mono">{jobResult.jobId}</span></p>
-            <p>Tx Hash: <span className="font-mono text-xs">{jobResult.txHash}</span></p>
-          </div>
-        </div>
+      {/* Private Key Input Modal */}
+      {showPrivateKeyInput && (
+        <PrivateKeyInput
+          walletId={agentWallet.id}
+          walletAddress={agentWallet.address}
+          onSubmit={handlePrivateKeySubmit}
+          onCancel={() => setShowPrivateKeyInput(false)}
+          action={`Create ${agents.length} concurrent jobs`}
+        />
       )}
     </div>
   );

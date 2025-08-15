@@ -1,8 +1,4 @@
 import { NextApiRequest, NextApiResponse } from 'next';
-import { 
-  PrivySessionSigner,
-  WalletAuthStore 
-} from '@virtuals-protocol/acp-node';
 import { parseEther, Address } from 'viem';
 
 const PRIVY_APP_ID = process.env.PRIVY_APP_ID!;
@@ -29,7 +25,39 @@ export default async function handler(req: NextApiRequest, res: NextApiResponse)
         error: 'Server configuration error: Privy credentials not found' 
       });
     }
-    const { walletId, walletAddress, toAddress, amountEth, authConfig } = req.body;
+    let { walletId, walletAddress, toAddress, amountEth, privateKeyBase64 } = req.body;
+    
+    // If walletId looks like "agent-0x..." it's not a real Privy wallet ID
+    // We need to look up the actual wallet ID
+    if (walletId && walletId.startsWith('agent-')) {
+      console.log('Detected custom wallet ID format, looking up actual Privy wallet ID...');
+      const addressFromId = walletId.replace('agent-', '');
+      
+      try {
+        // Try to find the actual wallet ID
+        const { PrivyClient } = await import('@privy-io/server-auth');
+        const privy = new PrivyClient(PRIVY_APP_ID, PRIVY_APP_SECRET);
+        const walletsResponse = await privy.walletApi.getWallets();
+        
+        const wallet = walletsResponse.data?.find(
+          w => w.address.toLowerCase() === addressFromId.toLowerCase()
+        );
+        
+        if (wallet) {
+          console.log(`Found Privy wallet ID: ${wallet.id} for address: ${addressFromId}`);
+          walletId = wallet.id;
+          walletAddress = wallet.address;
+        } else {
+          console.error(`No Privy wallet found for address: ${addressFromId}`);
+          return res.status(404).json({ 
+            error: 'Wallet not found in Privy',
+            details: `No Privy wallet exists for address ${addressFromId}. Please create the wallet through Privy first.`
+          });
+        }
+      } catch (lookupError: any) {
+        console.error('Failed to lookup wallet ID:', lookupError);
+      }
+    }
 
     if (!walletId || !walletAddress || !toAddress || !amountEth) {
       return res.status(400).json({ error: 'Missing required parameters' });
@@ -42,80 +70,44 @@ export default async function handler(req: NextApiRequest, res: NextApiResponse)
       amount: amountEth
     });
 
-    // Get the wallet's auth configuration
-    let walletAuthConfig = WalletAuthStore.get(walletId) || WalletAuthStore.getByAddress(walletAddress);
-    
-    // If auth config was passed from client (from localStorage), use it
-    if (!walletAuthConfig && authConfig) {
-      console.log('Using auth config from client localStorage');
-      // Restore to in-memory store
-      WalletAuthStore.save(walletId, {
-        walletId: authConfig.walletId,
-        walletAddress: authConfig.walletAddress,
-        keyQuorumId: authConfig.keyQuorumId,
-        authKeyId: authConfig.authKeyId || '',
-        privateKey: authConfig.privateKey,
-        privateKeyBase64: authConfig.privateKeyBase64,
-        publicKey: authConfig.publicKey,
-        createdAt: authConfig.createdAt ? new Date(authConfig.createdAt) : new Date()
-      });
-      walletAuthConfig = WalletAuthStore.get(walletId);
-    }
-    
-    // Get the actual Privy wallet ID if we only have the address
-    let privyWalletId = walletAuthConfig?.walletId;
-    if (privyWalletId && privyWalletId.startsWith('0x')) {
-      // This is an address, not a Privy wallet ID - need to fetch the actual ID
-      console.log('Fetching Privy wallet ID for address:', privyWalletId);
-      const { PrivyClient } = await import('@privy-io/server-auth');
-      const privy = new PrivyClient(PRIVY_APP_ID, PRIVY_APP_SECRET, {
-        walletApi: {}
-      });
-      
-      try {
-        const walletsResponse = await privy.walletApi.getWallets({
-          addresses: [walletAddress]
-        });
-        if (walletsResponse.data && walletsResponse.data.length > 0) {
-          privyWalletId = walletsResponse.data[0].id;
-          console.log('✅ Found Privy wallet ID:', privyWalletId);
-        }
-      } catch (e) {
-        console.error('Failed to get Privy wallet ID:', e);
-      }
-    }
-    
-    if (!walletAuthConfig) {
-      // Check if we can retrieve auth info from the status endpoint
-      console.log('Auth config not in memory, checking status...');
-      
-      // For now, return error - in production you'd want to persist this data
-      return res.status(404).json({ 
-        error: 'No authorization key found for this wallet. Please provide authConfig or ensure the wallet has an auth key.' 
+    // Private key must be provided per request - we don't store them
+    if (!privateKeyBase64) {
+      return res.status(400).json({ 
+        error: 'Private key (base64 format) required for backend transfer' 
       });
     }
-
-    console.log('Found auth config for wallet:', {
-      walletId: walletAuthConfig.walletId,
-      keyQuorumId: walletAuthConfig.keyQuorumId,
-      hasPrivateKey: !!walletAuthConfig.privateKeyBase64
-    });
     
-    console.log('🔑 Privy credentials for session signer:', {
-      hasAppId: !!PRIVY_APP_ID,
-      appIdPrefix: PRIVY_APP_ID?.substring(0, 10),
-      hasAppSecret: !!PRIVY_APP_SECRET,
-      secretLength: PRIVY_APP_SECRET?.length
-    });
-
-    // Initialize the session signer with the auth key
+    // Dynamic import to avoid webpack bundling issues
+    let PrivySessionSigner, WalletAuthStore;
+    try {
+      // Try using require for Node.js environment
+      const acpNode = require('@virtuals-protocol/acp-node');
+      console.log('Module loaded via require');
+      PrivySessionSigner = acpNode.PrivySessionSigner;
+      WalletAuthStore = acpNode.WalletAuthStore;
+    } catch (requireError) {
+      console.error('Require failed, trying dynamic import:', requireError);
+      // Fallback to dynamic import
+      const acpNode = await import('@virtuals-protocol/acp-node');
+      PrivySessionSigner = acpNode.PrivySessionSigner;
+      WalletAuthStore = acpNode.WalletAuthStore;
+    }
+    
+    if (!PrivySessionSigner) {
+      console.error('PrivySessionSigner not found in imported module');
+      return res.status(500).json({ error: 'Module import error' });
+    }
+    
+    console.log('Using provided private key for transfer');
+    
+    // Initialize the session signer with the provided private key
+    // Note: keyQuorumId is not needed - the private key is sufficient for authorization
     const sessionSigner = new PrivySessionSigner({
-      walletId: privyWalletId || walletAuthConfig.walletId, // Use the actual Privy wallet ID
-      walletAddress: walletAuthConfig.walletAddress as Address,
+      walletId: walletId,
+      walletAddress: walletAddress as Address,
       privyAppId: PRIVY_APP_ID,
       privyAppSecret: PRIVY_APP_SECRET,
-      sessionSignerPrivateKey: walletAuthConfig.privateKeyBase64 || walletAuthConfig.privateKey,
-      keyQuorumId: walletAuthConfig.keyQuorumId,
+      sessionSignerPrivateKey: privateKeyBase64,
       chainId: 84532 // Base Sepolia
     });
 

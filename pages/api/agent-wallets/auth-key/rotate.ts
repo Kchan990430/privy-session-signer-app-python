@@ -1,5 +1,4 @@
 import { NextApiRequest, NextApiResponse } from 'next';
-import { PrivyAuthKeyManager, WalletAuthStore } from '@virtuals-protocol/acp-node';
 
 const PRIVY_APP_ID = process.env.PRIVY_APP_ID!;
 const PRIVY_APP_SECRET = process.env.PRIVY_APP_SECRET!;
@@ -10,6 +9,9 @@ export default async function handler(req: NextApiRequest, res: NextApiResponse)
   }
 
   try {
+    // Dynamic import to avoid webpack bundling issues
+    const { PrivyAuthKeyManager, WalletAuthStore } = await import('@virtuals-protocol/acp-node');
+    
     const { walletId, walletAddress } = req.body;
 
     if (!walletId || !walletAddress) {
