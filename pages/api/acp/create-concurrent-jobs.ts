@@ -7,8 +7,9 @@ const {
   PrivySessionSigner,
   AcpContractClient,
   baseSepoliaAcpConfig,
-  WalletAuthStore 
 } = acpNode;
+
+import { gasSponsorshipConfig } from '../../../lib/gasSponsorshipConfig';
 
 const PRIVY_APP_ID = process.env.PRIVY_APP_ID!;
 const PRIVY_APP_SECRET = process.env.PRIVY_APP_SECRET!;
@@ -50,7 +51,7 @@ export default async function handler(req: NextApiRequest, res: NextApiResponse)
         );
         
         if (wallet) {
-          console.log(`Found Privy wallet ID: ${wallet.id} for address: ${addressFromId}`);
+          console.log(`Found Privy wallet ID: ${wallet.id} for address: ${wallet.address}`);
           walletId = wallet.id;
           walletAddress = wallet.address;
         }
@@ -69,10 +70,15 @@ export default async function handler(req: NextApiRequest, res: NextApiResponse)
       chainId: 84532 // Base Sepolia
     });
 
-    // Initialize ACP Contract Client
+    // Initialize ACP Contract Client with gas sponsorship config
+    const configWithSponsorship = {
+      ...baseSepoliaAcpConfig,
+      ...gasSponsorshipConfig
+    };
+    
     const acpContractClient = new AcpContractClient(
       sessionSigner,
-      baseSepoliaAcpConfig,
+      configWithSponsorship,
       process.env.NEXT_PUBLIC_ACP_RPC_URL
     );
     await acpContractClient.init();
@@ -80,13 +86,17 @@ export default async function handler(req: NextApiRequest, res: NextApiResponse)
     // Initialize ACP Client
     const acpClient = new AcpClient({
       acpContractClient,
-      onNewTask: (job) => console.log('New task:', job.id),
-      onEvaluate: (job) => console.log('Evaluate job:', job.id)
+      onNewTask: (job:any) => console.log('New task:', job.id),
+      onEvaluate: (job:any) => console.log('Evaluate job:', job.id)
     });
     await acpClient.init();
 
-    // Create jobs concurrently for all agents
-    const jobPromises = agents.map(async (agent: any) => {
+    // Create jobs concurrently with smart account
+    const jobPromises = agents.map(async (agent: any, index: number) => {
+      // Stagger requests to prevent nonce conflicts with smart accounts
+      if (index > 0) {
+        await new Promise(resolve => setTimeout(resolve, 500 * index)); // Stagger by 500ms per job
+      }
       try {
         console.log(`Creating job for agent: ${agent.walletAddress}`);
         
@@ -98,13 +108,13 @@ export default async function handler(req: NextApiRequest, res: NextApiResponse)
           agent.walletAddress as Address  // Evaluator (same as provider for testing)
         );
 
-        console.log(`✅ Job created for agent ${agent.name}: Job ID ${job.id}`);
+        console.log(`✅ Job created for agent ${agent.name}: Job ID ${job}`);
         
         return {
           success: true,
           agent: agent.name,
           agentAddress: agent.walletAddress,
-          jobId: job.id,
+          jobId: job,
           txHash: job.txHash
         };
       } catch (error: any) {
@@ -119,15 +129,7 @@ export default async function handler(req: NextApiRequest, res: NextApiResponse)
     });
 
     // Wait for all jobs to complete
-    const results = await Promise.allSettled(jobPromises);
-    
-    // Process results
-    const jobResults = results.map(result => 
-      result.status === 'fulfilled' ? result.value : {
-        success: false,
-        error: result.reason?.message || 'Job creation failed'
-      }
-    );
+    const jobResults = await Promise.all(jobPromises);
 
     const successCount = jobResults.filter(r => r.success).length;
     const failureCount = jobResults.filter(r => !r.success).length;
