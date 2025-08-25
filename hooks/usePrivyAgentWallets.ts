@@ -147,7 +147,13 @@ export function usePrivyAgentWallets() {
         }
         
         console.log('Adding agent wallet:', wallet.address);
-        const agentId = `agent-${wallet.address}`;
+        // Use the actual Privy wallet ID if available, otherwise fallback to address-based ID
+        // Privy embedded wallets have an 'id' property
+        const privyWalletId = (wallet as any).id;
+        const agentId = privyWalletId || `agent-${wallet.address}`;
+        
+        console.log('Agent wallet ID:', agentId, 'Privy ID:', privyWalletId);
+        
         agents.push({
           id: agentId,
           address: wallet.address as Address,

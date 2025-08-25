@@ -4,6 +4,8 @@ import { usePrivyAgentWallets } from '../hooks/usePrivyAgentWallets';
 // import { useAutoAuthKeySetup } from '../hooks/useAutoAuthKeySetup'; // Disabled - was causing excessive API calls
 import { TransferFundsPanelSDK } from './TransferFundsPanelSDK';
 import { CreateJobPanelSDK } from './CreateJobPanelSDK';
+import { CreateJobPanelSDKPython } from './CreateJobPanelSDKPython';
+import { DebugWallets } from './DebugWallets';
 import { BrowseJobsPanel } from './BrowseJobsPanel';
 import { BalanceDisplay } from './BalanceDisplay';
 import { CopyButton } from './CopyButton';
@@ -16,7 +18,7 @@ type TabType = 'overview' | 'transfer' | 'create-job' | 'browse-jobs';
 export function AgentWalletDashboardSDK() {
   const { authenticated, logout, user } = usePrivy();
   const { wallets } = useWallets();
-  const { createWallet } = useCreateWallet();
+  const { createWallet} = useCreateWallet();
   // Auth keys are no longer stored in localStorage for security
   // AUTO-SETUP DISABLED: Was causing excessive API calls and errors with Privy
   // const { setupStatus } = useAutoAuthKeySetup(); 
@@ -88,7 +90,9 @@ export function AgentWalletDashboardSDK() {
       // Create wallet using Privy SDK directly
       console.log('🚀 Creating new wallet with Privy SDK...');
       
-      const newWallet = await createWallet();
+      const newWallet = await createWallet({
+        createAdditional: true
+      });
       console.log('Create wallet result:', newWallet);
 
       if (newWallet) {
@@ -519,7 +523,7 @@ Would you like to use your primary wallet as an agent instead?`;
 
 
               {activeTab === 'create-job' && (
-                <CreateJobPanelSDK
+                <CreateJobPanelSDKPython
                   agentWallet={selectedAgent}
                 />
               )}
