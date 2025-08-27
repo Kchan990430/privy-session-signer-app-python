@@ -2,7 +2,7 @@ import { useState, useEffect } from 'react';
 import { Address } from 'viem';
 import { PrivateKeyInput } from './PrivateKeyInput';
 import { acpClient } from '@/lib/acp-python-client';
-import { generatePrivyAuthSignatureNodeStyle } from '@/lib/privy-signature-node-style';
+// V2: Private key needed for backend to generate auth signature
 
 interface Agent {
   id: string;
@@ -47,27 +47,14 @@ export function CreateJobPanelSDKPython({ agentWallet }: CreateJobPanelSDKPython
 
       const data = await response.json();
       
-      // For now, using mock data since agent browsing isn't fully implemented
-      // In production, this would return real agents from the Python SDK
-      const mockAgents: Agent[] = [
-        {
-          id: '1',
-          walletAddress: '0x742d35Cc6634C0532925a3b844Bc9e7595f0bEb9',
-          name: 'Test Agent 1',
-          description: 'Test agent for development',
-          metrics: { totalJobs: 10, successRate: 95, avgRating: 4.8 }
-        },
-        {
-          id: '2',
-          walletAddress: '0x5aAeb6053f3E94C9b9A09f33669435E7Ef1BeAed',
-          name: 'Test Agent 2',
-          description: 'Another test agent',
-          metrics: { totalJobs: 5, successRate: 90, avgRating: 4.5 }
-        }
-      ];
-      
-      setAgents(mockAgents);
-      console.log(`Found ${mockAgents.length} agents`);
+      // Use real agents from the Python SDK
+      if (data.success && data.agents) {
+        setAgents(data.agents);
+        console.log(`Found ${data.agents.length} agents from SDK`);
+      } else {
+        console.warn('No agents returned from API:', data);
+        setAgents([]);
+      }
     } catch (error) {
       console.error('Failed to browse agents:', error);
       setAgents([]);
@@ -87,8 +74,8 @@ export function CreateJobPanelSDKPython({ agentWallet }: CreateJobPanelSDKPython
       return;
     }
 
-    // ALWAYS prompt for private key - no stored keys (simpler, avoids bugs)
-    console.log('🔑 Frontend signing requires private key input...');
+    // V2: Private key required for backend to generate authorization signature
+    console.log('🔑 V2 backend auth generation requires private key input...');
     setShowPrivateKeyInput(true);
   };
 
@@ -97,7 +84,7 @@ export function CreateJobPanelSDKPython({ agentWallet }: CreateJobPanelSDKPython
     setJobResults([]);
 
     try {
-      console.log(`Creating jobs for ${agents.length} agents using Python API...`);
+      console.log(`Creating jobs for ${agents.length} agents using Python API with V2 auth generation...`);
 
       const results = [];
       const expiredAt = new Date(Date.now() + 24 * 60 * 60 * 1000); // 24 hours from now
@@ -105,82 +92,44 @@ export function CreateJobPanelSDKPython({ agentWallet }: CreateJobPanelSDKPython
       // Create jobs concurrently for all agents
       const jobPromises = agents.map(async (agent) => {
         try {
-          // Step 1: Prepare transaction
-          // Use the actual wallet ID from the agent wallet (Privy ID if available)
-          const walletId = agentWallet.id.startsWith('agent-') ? "ulkh8i0f6hkg2uu9ns1dt267" : agentWallet.id;
-          console.log(`Preparing job for agent ${agent.name} with wallet ID: ${walletId}`);
+          // V2 Direct Execution: One call that handles prepare + sign + execute
+          console.log(`Creating job for agent ${agent.name} with V2 direct execution`);
           
-          const prepareResponse = await fetch(`${pythonApiUrl}/api/prepare/create-job`, {
+          const createJobResponse = await fetch(`${pythonApiUrl}/api/prepare/create-job`, {
             method: 'POST',
             headers: { 'Content-Type': 'application/json' },
             body: JSON.stringify({
-              wallet_id: walletId,
               provider_address: agent.walletAddress,
               evaluator_address: agentWallet.address, // Using self as evaluator for testing
-              expired_at: expiredAt.toISOString()
+              expired_at: expiredAt.toISOString(),
+              private_key_base64: privateKeyBase64  // V2: Pass private key for direct execution
             })
           });
 
-          if (!prepareResponse.ok) {
-            throw new Error(`Failed to prepare transaction for ${agent.name}`);
+          if (!createJobResponse.ok) {
+            throw new Error(`Failed to create job for ${agent.name}`);
           }
 
-          const prepareData = await prepareResponse.json();
+          const jobResult = await createJobResponse.json();
 
-          // Step 2: Generate authorization signature (FRONTEND ONLY - Required)
-          if (!privateKeyBase64) {
-            throw new Error('Private key is required for transaction signing');
+          // V2 now returns final transaction result (not preparation data)
+          if (!jobResult.success || !jobResult.hash) {
+            throw new Error(`V2 job creation failed for ${agent.name}: ${jobResult.message || 'Unknown error'}`);
           }
-          
-          let executePayload: any = {
-            wallet_id: walletId,
-            transaction_data: prepareData.transaction,
-            sponsor: true
-          };
-          
-          // Frontend signing is mandatory - no backend signing
-          try {
-            console.log('🔐 Generating authorization signature...');
-            console.log('Transaction data:', prepareData.transaction);
-            
-            // Frontend signature generation - use RPC payload from backend
-            const frontendSignature = await generateFrontendSignature(
-              privateKeyBase64,
-              prepareData.rpc_payload  // Use the exact RPC payload from backend
-            );
-            
-            executePayload.authorization_signature = frontendSignature;
-            console.log('✅ Authorization signature generated:', frontendSignature.substring(0, 30) + '...');
-            
-          } catch (signatureError: any) {
-            console.error('❌ Failed to generate authorization signature:', signatureError.message);
-            throw new Error(`Signature generation failed: ${signatureError.message}`);
-          }
-          
-          console.log('Execute payload:', {
-            wallet_id: executePayload.wallet_id,
-            authorization_signature: executePayload.authorization_signature ? '[SIGNATURE PROVIDED]' : '[MISSING!]',
-            sponsor: executePayload.sponsor
+
+          console.log('✅ V2 job created successfully:', {
+            hash: jobResult.hash,
+            sponsored: jobResult.sponsored,
+            v2_executed: jobResult.v2_executed,
+            transaction_id: jobResult.transaction_id
           });
-          
-          const executeResponse = await fetch(`${pythonApiUrl}/api/execute/transaction`, {
-            method: 'POST',
-            headers: { 'Content-Type': 'application/json' },
-            body: JSON.stringify(executePayload)
-          });
-
-          if (!executeResponse.ok) {
-            const error = await executeResponse.json();
-            throw new Error(error.detail || 'Failed to execute transaction');
-          }
-
-          const executeData = await executeResponse.json();
 
           return {
             success: true,
             agent: agent.name,
-            txHash: executeData.hash,
-            sponsored: executeData.sponsored
+            txHash: jobResult.hash,
+            sponsored: jobResult.sponsored,
+            v2_execution: jobResult.v2_executed
           };
         } catch (error: any) {
           console.error(`Failed to create job for ${agent.name}:`, error);
@@ -208,25 +157,11 @@ export function CreateJobPanelSDKPython({ agentWallet }: CreateJobPanelSDKPython
     }
   };
 
-  // Generate frontend signature using Privy authorization key (P-256)
-  const generateFrontendSignature = async (
-    authorizationKey: string,
-    rpcPayload: any
-  ): Promise<string> => {
-    // Get the wallet ID for the Privy API call
-    const walletId = agentWallet.id.startsWith('agent-') ? "ulkh8i0f6hkg2uu9ns1dt267" : agentWallet.id;
-    
-    // Use Node.js style implementation that matches Privy docs exactly
-    return generatePrivyAuthSignatureNodeStyle(authorizationKey, walletId, rpcPayload);
-  };
-
-  // Handle private key submission
+  // Handle private key submission for V2 backend auth generation
   const handlePrivateKeySubmit = (_: string, privateKeyBase64: string) => {
     setShowPrivateKeyInput(false);
-    const walletId = agentWallet.id.startsWith('agent-') ? "hpvztnex4emkfroblqcmzyfp" : agentWallet.id;
-    console.log('🔑 Using private key for wallet ID:', walletId);
-    console.log('🔑 Private key (first 20 chars):', privateKeyBase64.substring(0, 20));
-    console.log('🔑 Key format:', privateKeyBase64.startsWith('wallet-auth:') ? 'wallet-auth format' : 'raw base64');
+    console.log('🔑 Using private key for V2 backend auth generation');
+    console.log('🔑 Private key format:', privateKeyBase64.startsWith('wallet-auth:') ? 'wallet-auth format' : 'raw base64');
     executeJobCreation(privateKeyBase64);
   };
 
@@ -320,12 +255,12 @@ export function CreateJobPanelSDKPython({ agentWallet }: CreateJobPanelSDKPython
         </div>
       )}
 
-      {/* Private Key Input Modal */}
+      {/* Private Key Input Modal for V2 Backend Auth Generation */}
       {showPrivateKeyInput && (
         <PrivateKeyInput
           walletId={agentWallet.id}
           walletAddress={agentWallet.address}
-          action="Create jobs with Python SDK"
+          action="Create jobs with V2 backend auth generation"
           onSubmit={handlePrivateKeySubmit}
           onCancel={() => setShowPrivateKeyInput(false)}
         />
